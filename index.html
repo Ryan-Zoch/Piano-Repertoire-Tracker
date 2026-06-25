@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#c8763f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Repertoire" />
   <title>Piano Repertoire — a cozy practice journal</title>
   <meta name="description" content="A warm, cozy place to log your piano practice and keep your repertoire." />
   <!-- Apply the saved (or time-of-day) theme before paint to avoid a flash -->
@@ -34,10 +37,18 @@
       </div>
 
       <nav class="tabs" aria-label="Main navigation">
-        <button class="tab is-active" data-view="dashboard">Dashboard</button>
-        <button class="tab" data-view="log">Practice Log</button>
-        <button class="tab" data-view="pieces">Repertoire</button>
-        <button class="tab" data-view="calendar">Calendar</button>
+        <button class="tab is-active" data-view="dashboard">
+          <span class="tab__icon" aria-hidden="true">☕</span><span class="tab__label">Dashboard</span><span class="tab__short">Home</span>
+        </button>
+        <button class="tab" data-view="log">
+          <span class="tab__icon" aria-hidden="true">📖</span><span class="tab__label">Practice Log</span><span class="tab__short">Log</span>
+        </button>
+        <button class="tab" data-view="pieces">
+          <span class="tab__icon" aria-hidden="true">🎼</span><span class="tab__label">Repertoire</span><span class="tab__short">Pieces</span>
+        </button>
+        <button class="tab" data-view="calendar">
+          <span class="tab__icon" aria-hidden="true">📅</span><span class="tab__label">Calendar</span><span class="tab__short">Calendar</span>
+        </button>
       </nav>
 
       <div class="topbar__actions">

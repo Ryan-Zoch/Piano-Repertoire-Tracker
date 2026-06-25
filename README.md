@@ -57,6 +57,15 @@ heatmap). Click any day and its sessions appear in a panel right beside the
 calendar (or below it on a narrow screen) — no pop-up to dismiss — where you can
 review, edit, or log practice for that date.
 
+### 📱 Works on your phone too
+The site is fully responsive — open it on a phone (or narrow your browser) and it
+switches to a layout tailored for small screens: a thumb-friendly **bottom tab
+bar**, full-width cards, a simplified calendar, and dialogs that slide up as
+**bottom sheets**. On a desktop it stays the roomy two-column layout. Because
+it's a static site, the phone version is delivered automatically by the browser
+based on screen size — no separate mobile app or address needed. Add it to your
+home screen for an app-like feel.
+
 ### ☀️🌙 Day / night theme
 A slider in the header switches between the warm cream "day" palette and a
 candlelit "night" palette that's gentler on the eyes for afternoon and evening

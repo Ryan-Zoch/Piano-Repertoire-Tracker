@@ -1156,6 +1156,12 @@
      Boot
      ========================================================= */
   function init() {
+    // Flag touch / phone devices so CSS can drop hover-only affordances
+    try {
+      if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
+        document.documentElement.classList.add("is-touch");
+      }
+    } catch (e) {}
     load();
     loadTheme();
     wireChrome();
