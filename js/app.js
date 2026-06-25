@@ -8,6 +8,7 @@
 
   /* ---------- Constants ---------- */
   const STORAGE_KEY = "piano-repertoire-tracker/v1";
+  const THEME_KEY = "piano-repertoire-tracker/theme";
   const STATUSES = ["Wishlist", "Learning", "Polishing", "Performance Ready", "Maintenance", "On Hold"];
   const DIFFICULTIES = ["Beginner", "Early Intermediate", "Intermediate", "Late Intermediate", "Advanced", "Virtuoso"];
   const MOODS = [
@@ -19,11 +20,13 @@
     { v: "😤", label: "😤 Frustrated" },
     { v: "🥱", label: "🥱 Tired" },
   ];
+  const FOCUS_TYPES = ["Technique", "Sight-reading", "Memorization", "Musicality", "Run-through"];
 
   /* ---------- State ---------- */
   let db = { pieces: [], sessions: [] };
   let currentView = "dashboard";
   let calCursor = startOfMonth(new Date()); // which month the calendar shows
+  let calSelected = todayISO();             // which day's detail panel is shown
 
   /* ---------- Small helpers ---------- */
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -87,6 +90,34 @@
     }
   }
 
+  /* ---------- Theme (day / night) ---------- */
+  function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") === "night" ? "night" : "day";
+  }
+  function applyTheme(theme) {
+    const night = theme === "night";
+    document.documentElement.setAttribute("data-theme", night ? "night" : "day");
+    const toggle = $("#theme-toggle");
+    const thumb = $("#theme-thumb");
+    if (toggle) toggle.setAttribute("aria-checked", String(night));
+    if (thumb) thumb.textContent = night ? "🌙" : "☀️";
+  }
+  function loadTheme() {
+    let theme = null;
+    try { theme = localStorage.getItem(THEME_KEY); } catch (e) {}
+    if (theme !== "night" && theme !== "day") {
+      const h = new Date().getHours();
+      theme = (h >= 18 || h < 6) ? "night" : "day"; // a cozy default by time of day
+    }
+    applyTheme(theme);
+  }
+  function toggleTheme() {
+    const next = currentTheme() === "night" ? "day" : "night";
+    applyTheme(next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    toast(next === "night" ? "Night theme — easy on the eyes 🌙" : "Day theme ☀️");
+  }
+
   /* ---------- Derived data ---------- */
   function pieceById(id) { return db.pieces.find((p) => p.id === id) || null; }
 
@@ -126,6 +157,23 @@
 
   function pieceMinutes(pieceId) {
     return sessionsForPiece(pieceId).reduce((sum, x) => sum + (Number(x.entry.minutes) || 0), 0);
+  }
+
+  // Most recent "focus for next time" left for a piece, so we can surface it when it's played again.
+  function lastNextFocusForPiece(pieceId, exceptSessionId) {
+    if (!pieceId) return "";
+    let best = null;
+    db.sessions.forEach((s) => {
+      if (s.id === exceptSessionId) return;
+      s.entries.forEach((e) => {
+        if (e.pieceId === pieceId && e.nextFocus && e.nextFocus.trim()) {
+          if (!best || s.date > best.date || (s.date === best.date && (s.createdAt || 0) > best.createdAt)) {
+            best = { date: s.date, createdAt: s.createdAt || 0, text: e.nextFocus.trim() };
+          }
+        }
+      });
+    });
+    return best ? best.text : "";
   }
 
   function sessionMinutes(s) {
@@ -260,13 +308,31 @@
     `;
   }
 
+  // Read-only rating: filled gold stars + faint remainder
+  function starsRead(n) {
+    n = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+    if (!n) return "";
+    return `<span class="stars-read" title="${n} of 5 this session">${"★".repeat(n)}<span class="stars-read__off">${"★".repeat(5 - n)}</span></span>`;
+  }
+
+  // Shared renderer for one practiced piece, used by the log cards and the calendar day modal
+  function entryLineHTML(e) {
+    const chips = [];
+    if (e.focus) chips.push(`<span class="chip">${escapeHtml(e.focus)}</span>`);
+    if (e.tempo) chips.push(`<span class="chip chip--tempo">♩ = ${escapeHtml(e.tempo)}</span>`);
+    const stars = starsRead(e.rating);
+    if (stars) chips.push(stars);
+    return `<div class="entry-line">
+      <div class="entry-line__title">${escapeHtml(e.title || "Untitled")}</div>
+      <div class="entry-line__min">${e.minutes ? fmtMinutes(e.minutes) : ""}</div>
+      ${chips.length ? `<div class="entry-line__meta">${chips.join(" ")}</div>` : ""}
+      ${e.notes ? `<div class="entry-line__notes">${escapeHtml(e.notes)}</div>` : ""}
+      ${e.nextFocus ? `<div class="entry-line__next">🎯 Next time: ${escapeHtml(e.nextFocus)}</div>` : ""}
+    </div>`;
+  }
+
   function sessionCardHTML(s) {
-    const entries = s.entries.map((e) => `
-      <div class="entry-line">
-        <div class="entry-line__title">${escapeHtml(e.title || "Untitled")}</div>
-        <div class="entry-line__min">${e.minutes ? fmtMinutes(e.minutes) : ""}</div>
-        ${e.notes ? `<div class="entry-line__notes">${escapeHtml(e.notes)}</div>` : ""}
-      </div>`).join("");
+    const entries = s.entries.map(entryLineHTML).join("");
 
     return `<article class="session" data-id="${s.id}">
       <div class="session__head">
@@ -380,7 +446,8 @@
       const isToday = iso === todayISO();
       const heat = info ? heatLevel(info.minutes) : 0;
       const dots = info ? Array.from({ length: Math.min(info.count, 4) }, () => `<span class="cal-dot"></span>`).join("") : "";
-      cells += `<button class="cal-cell ${heat ? "heat-" + heat : ""} ${isToday ? "cal-cell--today" : ""}" data-action="cal-day" data-date="${iso}">
+      const isSelected = iso === calSelected;
+      cells += `<button class="cal-cell ${heat ? "heat-" + heat : ""} ${isToday ? "cal-cell--today" : ""} ${isSelected ? "cal-cell--selected" : ""}" data-action="cal-day" data-date="${iso}">
         <span class="cal-cell__num">${day}</span>
         <span class="cal-cell__dots">${dots}</span>
         ${info ? `<span class="cal-cell__min">${fmtMinutes(info.minutes)}</span>` : ""}
@@ -396,19 +463,62 @@
         <button class="btn" data-action="new-session">＋ Log a practice</button>
       </div>
 
-      <div class="card">
-        <div class="cal-head">
-          <button class="iconbtn" data-action="cal-prev" title="Previous month">‹</button>
-          <h3>${monthName}</h3>
-          <button class="iconbtn" data-action="cal-next" title="Next month">›</button>
-          <button class="btn btn--ghost btn--sm" data-action="cal-today">Today</button>
+      <div class="cal-layout">
+        <div class="card">
+          <div class="cal-head">
+            <button class="iconbtn" data-action="cal-prev" title="Previous month">‹</button>
+            <h3>${monthName}</h3>
+            <button class="iconbtn" data-action="cal-next" title="Next month">›</button>
+            <button class="btn btn--ghost btn--sm" data-action="cal-today">Today</button>
+          </div>
+          <div class="cal-grid">${cells}</div>
+          <div class="cal-legend">
+            Less <span class="heat-1"></span><span class="heat-2"></span><span class="heat-3"></span><span class="heat-4"></span> More
+          </div>
         </div>
-        <div class="cal-grid">${cells}</div>
-        <div class="cal-legend">
-          Less <span class="heat-1"></span><span class="heat-2"></span><span class="heat-3"></span><span class="heat-4"></span> More
-        </div>
+        ${dayDetailHTML(calSelected)}
       </div>
     `;
+  }
+
+  // Inline detail panel beside the calendar, showing one day's sessions
+  function dayDetailHTML(iso) {
+    if (!iso) {
+      return `<aside class="card day-panel">
+        <div class="day-panel__placeholder">
+          <div class="day-panel__mark">🗓️</div>
+          <p>Pick a day on the calendar to see what you played.</p>
+        </div>
+      </aside>`;
+    }
+    const sessions = db.sessions.filter((s) => s.date === iso).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const total = sessions.reduce((sum, s) => sum + sessionMinutes(s), 0);
+    const body = sessions.length
+      ? sessions.map((s) => `
+          <div class="day-session">
+            <div class="session__head">
+              ${s.mood ? `<span class="session__mood">${s.mood}</span>` : ""}
+              <span class="session__total">${fmtMinutes(sessionMinutes(s))}</span>
+            </div>
+            ${s.notes ? `<p class="session__notes">${escapeHtml(s.notes)}</p>` : ""}
+            <div class="session__entries">${s.entries.map(entryLineHTML).join("")}</div>
+            <div class="session__actions">
+              <button class="btn btn--ghost btn--sm" data-action="edit-session" data-id="${s.id}">Edit</button>
+              <button class="btn btn--ghost btn--sm" data-action="delete-session" data-id="${s.id}">Delete</button>
+            </div>
+          </div>`).join("")
+      : `<p class="muted day-panel__quiet">Nothing logged on this day — a quiet one.</p>`;
+
+    return `<aside class="card day-panel">
+      <div class="day-panel__head">
+        <div>
+          <h3 class="day-panel__date">${escapeHtml(prettyDate(iso))}</h3>
+          ${sessions.length ? `<p class="day-panel__sub">${sessions.length} session${sessions.length === 1 ? "" : "s"} · ${fmtMinutes(total)}</p>` : ""}
+        </div>
+        <button class="btn btn--sm" data-action="log-for-day" data-date="${iso}">＋ Log</button>
+      </div>
+      ${body}
+    </aside>`;
   }
 
   function heatLevel(mins) {
@@ -467,8 +577,9 @@
       "goto-pieces": () => setView("pieces"),
       "cal-prev": () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() - 1, 1); render(); },
       "cal-next": () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 1); render(); },
-      "cal-today": () => { calCursor = startOfMonth(new Date()); render(); },
-      "cal-day": () => openDayModal(t.dataset.date),
+      "cal-today": () => { calCursor = startOfMonth(new Date()); calSelected = todayISO(); render(); },
+      "cal-day": () => { calSelected = t.dataset.date; render(); },
+      "log-for-day": () => openSessionModal(null, t.dataset.date),
       "import-csv": () => $("#csv-file-input").click(),
       "export-pieces": () => exportPiecesCSV(),
       "export-sessions": () => exportSessionsCSV(),
@@ -587,7 +698,8 @@
     const editing = !!session;
     const s = session || { id: uid(), date: presetDate || todayISO(), mood: "", notes: "", entries: [], createdAt: Date.now() };
     const working = JSON.parse(JSON.stringify(s));
-    if (!working.entries.length) working.entries.push({ pieceId: null, title: "", minutes: "", notes: "" });
+    const blankEntry = () => ({ pieceId: null, title: "", minutes: "", notes: "", tempo: "", focus: "", rating: 0, nextFocus: "" });
+    if (!working.entries.length) working.entries.push(blankEntry());
 
     const moodOpts = MOODS.map((m) => `<option value="${m.v}" ${m.v === working.mood ? "selected" : ""}>${m.label}</option>`).join("");
     const datalist = `<datalist id="piece-options">${db.pieces.map((p) => `<option value="${escapeHtml(p.title)}">`).join("")}</datalist>`;
@@ -616,8 +728,19 @@
     `, (body) => {
       const entriesWrap = $("#entries", body);
 
+      function focusOptions(sel) {
+        return ['<option value="">— focus —</option>']
+          .concat(FOCUS_TYPES.map((ft) => `<option value="${ft}" ${ft === sel ? "selected" : ""}>${ft}</option>`)).join("");
+      }
+
       function entryRowHTML(en, idx) {
+        const remPiece = findPieceByTitle(en.title);
+        const reminder = remPiece ? lastNextFocusForPiece(remPiece.id, working.id) : "";
+        const rating = Math.max(0, Math.min(5, Math.round(Number(en.rating) || 0)));
+        const starsEdit = [1, 2, 3, 4, 5].map((n) =>
+          `<button type="button" class="star-btn ${n <= rating ? "is-on" : ""}" data-val="${n}" title="${n} of 5">★</button>`).join("");
         return `<div class="entry-edit" data-idx="${idx}">
+          <div class="entry-reminder" ${reminder ? "" : "hidden"}>🎯 Last time you wanted to: <span class="entry-reminder__text">${escapeHtml(reminder)}</span></div>
           <div class="entry-edit__row">
             <div>
               <label class="lbl">Piece</label>
@@ -627,33 +750,79 @@
               <label class="lbl">Minutes</label>
               <input type="number" class="e-min" min="0" step="1" value="${en.minutes === "" || en.minutes == null ? "" : en.minutes}" placeholder="0" />
             </div>
+            <div>
+              <label class="lbl">Tempo (BPM)</label>
+              <input type="number" class="e-tempo" min="0" step="1" value="${en.tempo === "" || en.tempo == null ? "" : en.tempo}" placeholder="—" />
+            </div>
             <div class="entry-edit__remove">
               <button type="button" class="iconbtn iconbtn--danger e-remove" title="Remove">✕</button>
             </div>
           </div>
+          <div class="entry-edit__row2">
+            <div>
+              <label class="lbl">Practice focus</label>
+              <select class="select e-focus">${focusOptions(en.focus)}</select>
+            </div>
+            <div>
+              <label class="lbl">How it went</label>
+              <div class="stars" data-rating="${rating}">${starsEdit}</div>
+            </div>
+          </div>
           <div>
             <label class="lbl">Notes for this piece</label>
-            <textarea class="e-notes" placeholder="Bars to drill, tempo reached, fingering ideas…">${escapeHtml(en.notes)}</textarea>
+            <textarea class="e-notes" placeholder="Bars to drill, what improved, fingering ideas…">${escapeHtml(en.notes)}</textarea>
+          </div>
+          <div>
+            <label class="lbl">Focus for next time</label>
+            <input type="text" class="e-nextfocus" value="${escapeHtml(en.nextFocus || "")}" placeholder="What to tackle next session…" />
           </div>
         </div>`;
       }
 
+      function updateReminder(row) {
+        const rem = $(".entry-reminder", row);
+        if (!rem) return;
+        const p = findPieceByTitle($(".e-title", row).value);
+        const text = p ? lastNextFocusForPiece(p.id, working.id) : "";
+        if (text) { $(".entry-reminder__text", rem).textContent = text; rem.hidden = false; }
+        else rem.hidden = true;
+      }
+
       function drawEntries() {
         entriesWrap.innerHTML = working.entries.map(entryRowHTML).join("");
-        $$(".e-remove", entriesWrap).forEach((btn, i) => btn.addEventListener("click", () => {
-          syncEntries();
-          working.entries.splice(i, 1);
-          if (!working.entries.length) working.entries.push({ pieceId: null, title: "", minutes: "", notes: "" });
-          drawEntries();
-        }));
+        $$(".entry-edit", entriesWrap).forEach((row, i) => {
+          $(".e-remove", row).addEventListener("click", () => {
+            syncEntries();
+            working.entries.splice(i, 1);
+            if (!working.entries.length) working.entries.push(blankEntry());
+            drawEntries();
+          });
+          // Star rating: click to set, click the same star again to clear
+          $$(".star-btn", row).forEach((star) => star.addEventListener("click", () => {
+            const starsEl = $(".stars", row);
+            const val = Number(star.dataset.val);
+            const next = (Number(starsEl.dataset.rating) || 0) === val ? 0 : val;
+            starsEl.dataset.rating = next;
+            $$(".star-btn", row).forEach((b) => b.classList.toggle("is-on", Number(b.dataset.val) <= next));
+          }));
+          // Surface last session's "next time" note when the piece is chosen
+          const titleInput = $(".e-title", row);
+          titleInput.addEventListener("input", () => updateReminder(row));
+          titleInput.addEventListener("change", () => updateReminder(row));
+        });
       }
 
       function syncEntries() {
         $$(".entry-edit", entriesWrap).forEach((row, i) => {
-          if (!working.entries[i]) return;
-          working.entries[i].title = $(".e-title", row).value;
-          working.entries[i].minutes = $(".e-min", row).value;
-          working.entries[i].notes = $(".e-notes", row).value;
+          const en = working.entries[i];
+          if (!en) return;
+          en.title = $(".e-title", row).value;
+          en.minutes = $(".e-min", row).value;
+          en.tempo = $(".e-tempo", row).value;
+          en.focus = $(".e-focus", row).value;
+          en.rating = Number($(".stars", row).dataset.rating) || 0;
+          en.notes = $(".e-notes", row).value;
+          en.nextFocus = $(".e-nextfocus", row).value;
         });
       }
 
@@ -661,7 +830,7 @@
 
       $("#add-entry", body).addEventListener("click", () => {
         syncEntries();
-        working.entries.push({ pieceId: null, title: "", minutes: "", notes: "" });
+        working.entries.push(blankEntry());
         drawEntries();
         const rows = $$(".entry-edit", entriesWrap);
         const last = rows[rows.length - 1];
@@ -674,16 +843,21 @@
         const f = ev.target;
         // Build final entries: drop empty rows, link/create pieces
         const entries = working.entries
-          .filter((en) => en.title.trim() || en.notes.trim() || en.minutes)
+          .filter((en) => (en.title || "").trim() || (en.notes || "").trim() || en.minutes ||
+            en.tempo || en.focus || en.rating || (en.nextFocus || "").trim())
           .map((en) => {
-            const title = en.title.trim();
+            const title = (en.title || "").trim();
             let pieceId = null;
             if (title) { const p = ensurePiece(title); pieceId = p ? p.id : null; }
             return {
               pieceId,
               title: title || "Practice",
               minutes: en.minutes === "" ? 0 : Math.max(0, Math.round(Number(en.minutes) || 0)),
-              notes: en.notes.trim(),
+              tempo: en.tempo === "" ? 0 : Math.max(0, Math.round(Number(en.tempo) || 0)),
+              focus: en.focus || "",
+              rating: Math.max(0, Math.min(5, Math.round(Number(en.rating) || 0))),
+              notes: (en.notes || "").trim(),
+              nextFocus: (en.nextFocus || "").trim(),
             };
           });
 
@@ -718,42 +892,6 @@
     save();
     render();
     toast("Session deleted.");
-  }
-
-  /* ---------- Day modal (from calendar) ---------- */
-  function openDayModal(iso) {
-    const sessions = db.sessions.filter((s) => s.date === iso)
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-
-    const body = sessions.length
-      ? sessions.map((s) => `
-          <div class="session" style="box-shadow:none;margin-bottom:10px">
-            <div class="session__head">
-              ${s.mood ? `<span class="session__mood">${s.mood}</span>` : ""}
-              <span class="session__total">${fmtMinutes(sessionMinutes(s))}</span>
-            </div>
-            ${s.notes ? `<p class="session__notes">${escapeHtml(s.notes)}</p>` : ""}
-            <div class="session__entries">
-              ${s.entries.map((e) => `<div class="entry-line">
-                <div class="entry-line__title">${escapeHtml(e.title)}</div>
-                <div class="entry-line__min">${e.minutes ? fmtMinutes(e.minutes) : ""}</div>
-                ${e.notes ? `<div class="entry-line__notes">${escapeHtml(e.notes)}</div>` : ""}
-              </div>`).join("")}
-            </div>
-            <div class="session__actions">
-              <button class="btn btn--ghost btn--sm" data-action="edit-session" data-id="${s.id}">Edit</button>
-            </div>
-          </div>`).join("")
-      : `<p class="muted" style="margin-top:0">Nothing logged on this day — a quiet one.</p>`;
-
-    openModal(prettyDate(iso), `
-      ${body}
-      <div class="form-actions">
-        <button type="button" class="btn" id="add-for-day">＋ Log practice for this day</button>
-      </div>
-    `, (root) => {
-      $("#add-for-day", root).addEventListener("click", () => { closeModal(); openSessionModal(null, iso); });
-    });
   }
 
   /* =========================================================
@@ -824,17 +962,19 @@
   /* ---------- Export: Practice log (one row per piece-entry) ---------- */
   function exportSessionsCSV() {
     if (!db.sessions.length) { toast("No practice sessions to export yet.", "bad"); return; }
-    const headers = ["SessionId", "Date", "Mood", "Piece", "Composer", "Minutes", "PieceNotes", "SessionNotes"];
+    const headers = ["SessionId", "Date", "Mood", "Piece", "Composer", "Minutes", "Tempo", "Focus", "Rating", "PieceNotes", "NextFocus", "SessionNotes"];
     const rows = [];
     sortedSessions().forEach((s) => {
       if (!s.entries.length) {
-        rows.push({ SessionId: s.id, Date: s.date, Mood: s.mood, Piece: "", Composer: "", Minutes: "", PieceNotes: "", SessionNotes: s.notes });
+        rows.push({ SessionId: s.id, Date: s.date, Mood: s.mood, Piece: "", Composer: "", Minutes: "", Tempo: "", Focus: "", Rating: "", PieceNotes: "", NextFocus: "", SessionNotes: s.notes });
       }
       s.entries.forEach((e) => {
         const p = e.pieceId ? pieceById(e.pieceId) : null;
         rows.push({
           SessionId: s.id, Date: s.date, Mood: s.mood, Piece: e.title,
-          Composer: p ? p.composer : "", Minutes: e.minutes, PieceNotes: e.notes, SessionNotes: s.notes,
+          Composer: p ? p.composer : "", Minutes: e.minutes,
+          Tempo: e.tempo || "", Focus: e.focus || "", Rating: e.rating || "",
+          PieceNotes: e.notes, NextFocus: e.nextFocus || "", SessionNotes: s.notes,
         });
       });
     });
@@ -902,17 +1042,21 @@
       const g = groups.get(key);
       const piece = String(get(r, "Piece", "Title")).trim();
       const minutes = Math.max(0, Math.round(Number(get(r, "Minutes")) || 0));
+      const tempo = Math.max(0, Math.round(Number(get(r, "Tempo")) || 0));
+      const focus = String(get(r, "Focus")).trim();
+      const rating = Math.max(0, Math.min(5, Math.round(Number(get(r, "Rating")) || 0)));
       const pNotes = String(get(r, "PieceNotes", "Notes")).trim();
-      if (piece || minutes || pNotes) {
+      const nextFocus = String(get(r, "NextFocus")).trim();
+      if (piece || minutes || pNotes || tempo || focus || rating || nextFocus) {
         let pieceId = null;
         if (piece) { const p = ensurePiece(piece, get(r, "Composer")); pieceId = p ? p.id : null; }
-        g.entries.push({ pieceId, title: piece || "Practice", minutes, notes: pNotes });
+        g.entries.push({ pieceId, title: piece || "Practice", minutes, tempo, focus, rating, notes: pNotes, nextFocus });
       }
     });
 
     let count = 0;
     groups.forEach((g) => {
-      if (!g.entries.length) g.entries.push({ pieceId: null, title: "Practice", minutes: 0, notes: "" });
+      if (!g.entries.length) g.entries.push({ pieceId: null, title: "Practice", minutes: 0, tempo: 0, focus: "", rating: 0, notes: "", nextFocus: "" });
       db.sessions.push(g);
       count++;
     });
@@ -986,6 +1130,10 @@
   function wireChrome() {
     $$(".tab").forEach((tab) => tab.addEventListener("click", () => setView(tab.dataset.view)));
 
+    // Day / night theme slider
+    const themeToggle = $("#theme-toggle");
+    if (themeToggle) themeToggle.addEventListener("click", toggleTheme);
+
     // Dropdown menu
     const menu = $("[data-menu]");
     const toggle = $("[data-menu-toggle]", menu);
@@ -1009,6 +1157,7 @@
      ========================================================= */
   function init() {
     load();
+    loadTheme();
     wireChrome();
     render();
   }

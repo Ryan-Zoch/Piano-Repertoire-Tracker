@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Piano Repertoire — a cozy practice journal</title>
   <meta name="description" content="A warm, cozy place to log your piano practice and keep your repertoire." />
+  <!-- Apply the saved (or time-of-day) theme before paint to avoid a flash -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("piano-repertoire-tracker/theme");
+        if (t !== "night" && t !== "day") {
+          var h = new Date().getHours();
+          t = (h >= 18 || h < 6) ? "night" : "day";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B9%3C/text%3E%3C/svg%3E" />
 </head>
@@ -28,6 +41,12 @@
       </nav>
 
       <div class="topbar__actions">
+        <button class="theme-toggle" id="theme-toggle" role="switch" aria-checked="false" aria-label="Switch between day and night theme" title="Day / night theme">
+          <span class="theme-toggle__track">
+            <span class="theme-toggle__thumb" id="theme-thumb">☀️</span>
+          </span>
+        </button>
+
         <div class="menu" data-menu>
           <button class="btn btn--ghost" data-menu-toggle aria-haspopup="true" aria-expanded="false">Data ▾</button>
           <div class="menu__list" data-menu-list hidden>

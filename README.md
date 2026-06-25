@@ -27,9 +27,20 @@ all-time time at the keys, and your current day-by-day practice streak — plus
 your most recent sessions and what's currently on the music stand.
 
 ### 📖 Practice Log
-Log a practice session with **multiple pieces, each with its own notes** and
-minutes. Add a mood, overall session notes, and the date. Edit or delete any
-session later.
+Log a practice session with **multiple pieces, each with its own details** —
+not just notes. For every piece you can record:
+
+- **Minutes** spent
+- **Tempo (BPM)** reached — so you can watch a piece speed up over time
+- **Practice focus** — Technique, Sight-reading, Memorization, Musicality, or
+  Run-through
+- **How it went** — a quick 1–5 star rating
+- **Notes** for that piece
+- **Focus for next time** — and the next time you log that same piece, the app
+  gently reminds you what you wanted to work on 🎯
+
+Add a mood, overall session notes, and the date too. Edit or delete any session
+later.
 
 ### 🎼 Repertoire
 Your personal database of pieces. Track title, composer, opus/catalog number,
@@ -42,8 +53,15 @@ instantly. Each piece shows how much time you've poured into it.
 
 ### 📅 Calendar
 A month view that glows warmer the more you practiced each day (like a cozy
-heatmap). Click any day to see exactly what you played, or to log practice for
-that date.
+heatmap). Click any day and its sessions appear in a panel right beside the
+calendar (or below it on a narrow screen) — no pop-up to dismiss — where you can
+review, edit, or log practice for that date.
+
+### ☀️🌙 Day / night theme
+A slider in the header switches between the warm cream "day" palette and a
+candlelit "night" palette that's gentler on the eyes for afternoon and evening
+practice. Your choice is remembered, and on a first visit the app picks a
+sensible default based on the time of day.
 
 ### 💾 Import / Export (the **Data ▾** menu)
 - **Export Repertoire (CSV)** — one row per piece.
@@ -66,7 +84,7 @@ Title, Composer, Catalog, Status, Difficulty, Key, Tags, Favorite, TotalMinutes,
 **Practice log** (one row per piece practiced)
 
 ```
-SessionId, Date, Mood, Piece, Composer, Minutes, PieceNotes, SessionNotes
+SessionId, Date, Mood, Piece, Composer, Minutes, Tempo, Focus, Rating, PieceNotes, NextFocus, SessionNotes
 ```
 
 Both are standard, spreadsheet-friendly CSVs — commas, quotes, and line breaks
