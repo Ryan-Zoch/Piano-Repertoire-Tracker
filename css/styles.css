@@ -167,6 +167,15 @@ html[data-theme="night"] .theme-toggle__track { background: linear-gradient(180d
 }
 html[data-theme="night"] .theme-toggle__thumb { transform: translateX(28px); }
 
+/* ===== Cloud sync button ===== */
+.sync-btn { display: inline-flex; align-items: center; gap: 6px; }
+.sync-btn__icon { font-size: 1rem; line-height: 1; }
+.sync-btn[data-state="ok"]   { color: var(--sage); border-color: #cdd9c4; }
+.sync-btn[data-state="ok"] .sync-btn__icon::after { content: "✓"; font-size: .7rem; margin-left: 1px; }
+.sync-btn[data-state="err"]  { color: var(--terracotta); border-color: #e6b6a6; }
+.sync-btn[data-state="busy"] .sync-btn__icon { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ===== Buttons ===== */
 .btn {
   font: inherit; font-size: .9rem; cursor: pointer; border: 0;
@@ -484,6 +493,7 @@ html.is-touch .iconbtn:hover { transform: none; }
   .brand__mark { font-size: 28px; }
   .brand__title { font-size: 1.15rem; }
   .brand__tagline { display: none; }
+  .sync-btn__label { display: none; }   /* icon-only to save header space */
 
   /* --- Bottom tab bar --- */
   .tabs {

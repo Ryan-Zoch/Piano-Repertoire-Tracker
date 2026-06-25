@@ -58,6 +58,10 @@
           </span>
         </button>
 
+        <button class="btn btn--ghost sync-btn" id="sync-btn" data-state="off" title="Cloud sync">
+          <span class="sync-btn__icon" aria-hidden="true">☁</span><span class="sync-btn__label">Sync</span>
+        </button>
+
         <div class="menu" data-menu>
           <button class="btn btn--ghost" data-menu-toggle aria-haspopup="true" aria-expanded="false">Data ▾</button>
           <div class="menu__list" data-menu-list hidden>
@@ -100,6 +104,9 @@
   <!-- Toast notifications -->
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
+  <!-- Optional cloud sync: Supabase SDK + your config (app works fully without these) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

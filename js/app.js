@@ -23,7 +23,8 @@
   const FOCUS_TYPES = ["Technique", "Sight-reading", "Memorization", "Musicality", "Run-through"];
 
   /* ---------- State ---------- */
-  let db = { pieces: [], sessions: [] };
+  // tombstones record deletions (id -> timestamp) so deletes propagate when syncing
+  let db = { pieces: [], sessions: [], tombstones: { pieces: {}, sessions: {} }, updatedAt: 0 };
   let currentView = "dashboard";
   let calCursor = startOfMonth(new Date()); // which month the calendar shows
   let calSelected = todayISO();             // which day's detail panel is shown
@@ -68,20 +69,33 @@
   }
 
   /* ---------- Persistence ---------- */
+  function normalizeDb(d) {
+    const out = {
+      pieces: Array.isArray(d.pieces) ? d.pieces : [],
+      sessions: Array.isArray(d.sessions) ? d.sessions : [],
+      tombstones: {
+        pieces: (d.tombstones && d.tombstones.pieces) || {},
+        sessions: (d.tombstones && d.tombstones.sessions) || {},
+      },
+      updatedAt: d.updatedAt || 0,
+    };
+    // Backfill record timestamps so older data merges sensibly
+    out.pieces.forEach((p) => { if (!p.updatedAt) p.updatedAt = Date.parse(p.dateAdded) || 1; });
+    out.sessions.forEach((s) => { if (!s.updatedAt) s.updatedAt = s.createdAt || Date.parse(s.date) || 1; });
+    return out;
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        db.pieces = Array.isArray(parsed.pieces) ? parsed.pieces : [];
-        db.sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
-      }
+      if (raw) db = normalizeDb(JSON.parse(raw));
     } catch (e) {
       console.warn("Could not load saved data:", e);
     }
   }
 
-  function save() {
+  // Write to localStorage only (no sync side effects)
+  function persistLocal() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
     } catch (e) {
@@ -89,6 +103,18 @@
       console.error(e);
     }
   }
+
+  // Save locally and, if signed in to sync, schedule a background sync
+  function save() {
+    db.updatedAt = Date.now();
+    persistLocal();
+    scheduleSync();
+  }
+
+  // Mark a record as changed (for last-write-wins merging)
+  function touch(rec) { rec.updatedAt = Date.now(); return rec; }
+  // Record a deletion so it propagates to other devices
+  function tombstone(kind, id) { db.tombstones[kind][id] = Date.now(); }
 
   /* ---------- Theme (day / night) ---------- */
   function currentTheme() {
@@ -144,7 +170,8 @@
   function newPiece(over = {}) {
     return Object.assign(
       { id: uid(), title: "", composer: "", difficulty: "", status: "Learning",
-        musicalKey: "", catalog: "", tags: [], favorite: false, notes: "", dateAdded: todayISO() },
+        musicalKey: "", catalog: "", tags: [], favorite: false, notes: "", dateAdded: todayISO(),
+        updatedAt: Date.now() },
       over
     );
   }
@@ -573,7 +600,7 @@
       "new-piece": () => openPieceModal(),
       "edit-piece": () => openPieceModal(pieceById(id)),
       "delete-piece": () => deletePiece(id),
-      "toggle-fav": () => { const p = pieceById(id); if (p) { p.favorite = !p.favorite; save(); render(); } },
+      "toggle-fav": () => { const p = pieceById(id); if (p) { p.favorite = !p.favorite; touch(p); save(); render(); } },
       "goto-pieces": () => setView("pieces"),
       "cal-prev": () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() - 1, 1); render(); },
       "cal-next": () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 1); render(); },
@@ -668,6 +695,7 @@
           tags: f.tags.value.split(",").map((s) => s.trim()).filter(Boolean),
           notes: f.notes.value.trim(),
         });
+        touch(p);
         if (!editing) db.pieces.push(p);
         save();
         closeModal();
@@ -686,8 +714,9 @@
       : `Delete "${p.title}" from your repertoire?`;
     if (!confirm(msg)) return;
     db.pieces = db.pieces.filter((x) => x.id !== id);
+    tombstone("pieces", id);
     // detach references but keep the title snapshot in entries
-    db.sessions.forEach((s) => s.entries.forEach((en) => { if (en.pieceId === id) en.pieceId = null; }));
+    db.sessions.forEach((s) => { if (s.entries.some((en) => en.pieceId === id)) { s.entries.forEach((en) => { if (en.pieceId === id) en.pieceId = null; }); touch(s); } });
     save();
     render();
     toast("Piece removed.");
@@ -870,6 +899,7 @@
           notes: f.notes.value.trim(),
           entries,
           createdAt: working.createdAt || Date.now(),
+          updatedAt: Date.now(),
         };
 
         const existing = db.sessions.findIndex((x) => x.id === finalSession.id);
@@ -889,6 +919,7 @@
     if (!s) return;
     if (!confirm(`Delete the practice session from ${prettyDate(s.date)}?`)) return;
     db.sessions = db.sessions.filter((x) => x.id !== id);
+    tombstone("sessions", id);
     save();
     render();
     toast("Session deleted.");
@@ -1022,7 +1053,7 @@
         dateAdded: String(get(r, "DateAdded")).trim() || todayISO(),
       };
       const existing = findPieceByTitle(title);
-      if (existing) { Object.assign(existing, data); merged++; }
+      if (existing) { Object.assign(existing, data); touch(existing); merged++; }
       else { db.pieces.push(newPiece(Object.assign({ title }, data))); added++; }
     });
     save(); render();
@@ -1037,7 +1068,7 @@
       if (!date) return;
       const key = String(get(r, "SessionId")).trim() || `${date}::${String(get(r, "SessionNotes")).trim()}`;
       if (!groups.has(key)) {
-        groups.set(key, { id: uid(), date, mood: get(r, "Mood"), notes: get(r, "SessionNotes"), entries: [], createdAt: Date.now() });
+        groups.set(key, { id: uid(), date, mood: get(r, "Mood"), notes: get(r, "SessionNotes"), entries: [], createdAt: Date.now(), updatedAt: Date.now() });
       }
       const g = groups.get(key);
       const piece = String(get(r, "Piece", "Title")).trim();
@@ -1087,15 +1118,27 @@
       toast("This doesn't look like a tracker backup.", "bad"); return;
     }
     if (!confirm("Restoring will replace everything currently on this device. Continue?")) return;
-    db = { pieces: data.pieces, sessions: data.sessions };
+    db = normalizeDb(data);
+    // Bump timestamps so the restored copy wins when it syncs to other devices
+    const now = Date.now();
+    db.pieces.forEach((p) => { p.updatedAt = now; });
+    db.sessions.forEach((s) => { s.updatedAt = now; });
     save(); render();
     toast("Backup restored.", "good");
   }
 
   function clearData() {
-    if (!confirm("Erase ALL pieces and practice sessions from this device? This can't be undone.")) return;
+    const synced = isSignedIn();
+    const warn = synced
+      ? "Erase ALL pieces and practice sessions? Because sync is on, this erases them on every signed-in device too. This can't be undone."
+      : "Erase ALL pieces and practice sessions from this device? This can't be undone.";
+    if (!confirm(warn)) return;
     if (!confirm("Really sure? Consider exporting a backup first.")) return;
-    db = { pieces: [], sessions: [] };
+    // Tombstone everything so the erase propagates through sync
+    db.pieces.forEach((p) => tombstone("pieces", p.id));
+    db.sessions.forEach((s) => tombstone("sessions", s.id));
+    db.pieces = [];
+    db.sessions = [];
     save(); render();
     toast("All data erased.");
   }
@@ -1108,6 +1151,233 @@
     reader.onload = () => { handler(String(reader.result || "")); input.value = ""; };
     reader.onerror = () => { toast("Couldn't read that file.", "bad"); input.value = ""; };
     reader.readAsText(file);
+  }
+
+  /* =========================================================
+     Cloud sync (Supabase magic-link auth + per-record merge)
+     The app works fully offline; sync is an optional layer on top.
+     ========================================================= */
+  let sb = null;            // Supabase client
+  let authUser = null;      // signed-in user (or null)
+  let syncing = false;
+  let lastSyncedAt = null;
+  let syncErr = null;
+  let syncDebounce = null;
+  let pendingEmail = "";
+
+  function syncConfigured() {
+    return !!(window.PRT_CONFIG && window.PRT_CONFIG.supabaseUrl && window.PRT_CONFIG.supabaseAnonKey && window.supabase);
+  }
+  function isSignedIn() { return !!authUser; }
+
+  /* ----- Merge engine: per-record last-write-wins + tombstones ----- */
+  function mergeCollection(localArr, remoteArr, localTomb, remoteTomb) {
+    const tomb = Object.assign({}, localTomb || {});
+    Object.entries(remoteTomb || {}).forEach(([id, ts]) => { tomb[id] = Math.max(tomb[id] || 0, ts); });
+
+    const byId = new Map();
+    (localArr || []).forEach((r) => byId.set(r.id, r));
+    (remoteArr || []).forEach((r) => {
+      const cur = byId.get(r.id);
+      if (!cur || (r.updatedAt || 0) > (cur.updatedAt || 0)) byId.set(r.id, r);
+    });
+
+    const arr = [];
+    byId.forEach((r) => {
+      const t = tomb[r.id];
+      if (t != null && t >= (r.updatedAt || 0)) return;   // a delete newer than this record wins
+      arr.push(r);
+    });
+    // Drop tombstones that a newer edit has overridden (record was re-created/edited)
+    arr.forEach((r) => { if (tomb[r.id] != null && (r.updatedAt || 0) > tomb[r.id]) delete tomb[r.id]; });
+    return { arr, tomb };
+  }
+
+  // Merge a remote db document into the local db. Returns true if anything changed.
+  function mergeRemote(remote) {
+    if (!remote || (!remote.pieces && !remote.sessions)) return false;
+    const before = JSON.stringify(db);
+    const rt = remote.tombstones || {};
+    const p = mergeCollection(db.pieces, remote.pieces, db.tombstones.pieces, rt.pieces);
+    const s = mergeCollection(db.sessions, remote.sessions, db.tombstones.sessions, rt.sessions);
+    db.pieces = p.arr;
+    db.sessions = s.arr;
+    db.tombstones = { pieces: p.tomb, sessions: s.tomb };
+    db.updatedAt = Math.max(db.updatedAt || 0, remote.updatedAt || 0);
+    return JSON.stringify(db) !== before;
+  }
+
+  /* ----- Network ops ----- */
+  async function pullRemote() {
+    const { data, error } = await sb.from("user_data").select("data").eq("user_id", authUser.id).maybeSingle();
+    if (error) throw error;
+    return data ? data.data : null;
+  }
+  async function pushRemote() {
+    const { error } = await sb.from("user_data")
+      .upsert({ user_id: authUser.id, data: db, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    if (error) throw error;
+  }
+
+  // Pull → merge → push. Safe to call often; it no-ops while busy or signed out.
+  async function syncNow() {
+    if (!syncConfigured() || !isSignedIn() || syncing) return;
+    syncing = true; updateSyncButton();
+    try {
+      const remote = await pullRemote();
+      if (mergeRemote(remote)) { persistLocal(); render(); }
+      await pushRemote();
+      lastSyncedAt = Date.now(); syncErr = null;
+    } catch (e) {
+      syncErr = e; console.error("Sync failed:", e);
+      toast("Sync failed — will retry. " + (e.message || ""), "bad");
+    } finally {
+      syncing = false; updateSyncButton(); refreshSyncModal();
+    }
+  }
+  function scheduleSync() {
+    if (!isSignedIn()) return;
+    clearTimeout(syncDebounce);
+    syncDebounce = setTimeout(syncNow, 1500);
+  }
+
+  /* ----- Auth ----- */
+  function onAuth(session) {
+    authUser = session ? session.user : null;
+    updateSyncButton();
+    refreshSyncModal();
+    if (authUser) syncNow();
+  }
+  function cleanAuthUrl() {
+    if (/access_token|error_description|[?&]code=/.test(location.hash + location.search)) {
+      history.replaceState(null, "", location.pathname);
+    }
+  }
+  async function requestMagicLink(email) {
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+    if (error) throw error;
+  }
+  async function verifyCode(email, code) {
+    const { error } = await sb.auth.verifyOtp({ email, token: String(code).trim(), type: "email" });
+    if (error) throw error;
+  }
+  async function signOutSync() {
+    try { await sb.auth.signOut(); } catch (e) {}
+    authUser = null; updateSyncButton(); refreshSyncModal();
+    toast("Signed out of sync.");
+  }
+
+  function initSync() {
+    updateSyncButton();
+    if (!syncConfigured()) return;
+    try {
+      sb = window.supabase.createClient(window.PRT_CONFIG.supabaseUrl, window.PRT_CONFIG.supabaseAnonKey, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      });
+    } catch (e) { console.error("Supabase init failed:", e); sb = null; return; }
+
+    sb.auth.getSession().then(({ data }) => { cleanAuthUrl(); onAuth(data.session); });
+    sb.auth.onAuthStateChange((_evt, session) => onAuth(session));
+
+    // Reconcile with other devices when returning to the app, plus a gentle heartbeat
+    window.addEventListener("focus", syncNow);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) syncNow(); });
+    setInterval(syncNow, 60000);
+  }
+
+  /* ----- Sync UI ----- */
+  function updateSyncButton() {
+    const btn = $("#sync-btn");
+    if (!btn) return;
+    const label = btn.querySelector(".sync-btn__label");
+    let text, state, title;
+    if (!syncConfigured())      { text = "Sync"; state = "off"; title = "Set up cloud sync (see README)"; }
+    else if (!isSignedIn())     { text = "Sync"; state = "out"; title = "Sign in to sync across devices"; }
+    else if (syncing)           { text = "Syncing…"; state = "busy"; title = "Syncing…"; }
+    else if (syncErr)           { text = "Retry"; state = "err"; title = "Sync error — tap to retry"; }
+    else                        { text = "Synced"; state = "ok"; title = "Synced" + (lastSyncedAt ? " at " + new Date(lastSyncedAt).toLocaleTimeString() : ""); }
+    btn.dataset.state = state;
+    btn.title = title;
+    if (label) label.textContent = text;
+  }
+
+  function openSyncModal() {
+    if (syncErr && isSignedIn()) syncNow();
+    openModal("Cloud sync", syncModalBody(), wireSyncModal);
+  }
+  function refreshSyncModal() {
+    const overlay = $("#modal-overlay");
+    if (!overlay || overlay.hidden || !$("#sync-modal")) return;
+    $("#modal-body").innerHTML = syncModalBody();
+    wireSyncModal($("#modal-body"));
+  }
+  function syncModalBody() {
+    if (!syncConfigured()) {
+      return `<div id="sync-modal">
+        <p>Cloud sync isn't configured yet. Add your Supabase project URL and anon key in <code>js/config.js</code>, then follow <strong>Cloud sync setup</strong> in the README.</p>
+        <div class="form-actions"><button type="button" class="btn" data-modal-close>Got it</button></div>
+      </div>`;
+    }
+    if (isSignedIn()) {
+      const when = lastSyncedAt ? new Date(lastSyncedAt).toLocaleString() : "not yet";
+      return `<div id="sync-modal">
+        <p>Signed in as <strong>${escapeHtml(authUser.email || "you")}</strong>. Your repertoire and practice log sync automatically across every device you sign in on.</p>
+        <p class="muted">Last synced: ${escapeHtml(when)}${syncErr ? " · <span style=\"color:var(--terracotta)\">last attempt failed</span>" : ""}</p>
+        <div class="form-actions">
+          <button type="button" class="btn btn--ghost" id="sync-signout">Sign out</button>
+          <button type="button" class="btn" id="sync-now">Sync now</button>
+        </div>
+      </div>`;
+    }
+    return `<div id="sync-modal">
+      <p>Sign in with your email to keep your practice journal in sync across your phone and computer — no password, we'll email you a magic link.</p>
+      <div class="form-grid">
+        <div>
+          <label class="lbl">Email</label>
+          <input type="email" id="sync-email" placeholder="you@example.com" autocomplete="email" value="${escapeHtml(pendingEmail)}" />
+        </div>
+        <div class="form-actions"><button type="button" class="btn btn--block" id="sync-send">Email me a magic link</button></div>
+        <div id="sync-sent" ${pendingEmail ? "" : "hidden"}>
+          <hr class="hr" />
+          <p class="muted">✉️ Check your inbox and tap the link — on this device it signs you in automatically. Or, if you enabled email codes, type the 6-digit code:</p>
+          <div class="form-row">
+            <input type="text" id="sync-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" />
+            <button type="button" class="btn" id="sync-verify">Verify code</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+  function wireSyncModal(body) {
+    const signout = $("#sync-signout", body);
+    if (signout) signout.addEventListener("click", signOutSync);
+
+    const now = $("#sync-now", body);
+    if (now) now.addEventListener("click", () => { toast("Syncing…"); syncNow(); });
+
+    const send = $("#sync-send", body);
+    if (send) send.addEventListener("click", async () => {
+      const email = ($("#sync-email", body).value || "").trim();
+      if (!/.+@.+\..+/.test(email)) { toast("Please enter a valid email.", "bad"); return; }
+      send.disabled = true; send.textContent = "Sending…";
+      try {
+        await requestMagicLink(email);
+        pendingEmail = email;
+        const sent = $("#sync-sent", body); if (sent) sent.hidden = false;
+        toast("Magic link sent — check your email ✉️", "good");
+      } catch (e) { toast("Couldn't send link: " + (e.message || ""), "bad"); }
+      finally { send.disabled = false; send.textContent = "Email me a magic link"; }
+    });
+
+    const verify = $("#sync-verify", body);
+    if (verify) verify.addEventListener("click", async () => {
+      const code = ($("#sync-code", body).value || "").trim();
+      if (!code) { toast("Enter the code from your email.", "bad"); return; }
+      verify.disabled = true;
+      try { await verifyCode(pendingEmail, code); toast("Signed in 🎉", "good"); }
+      catch (e) { toast("That code didn't work: " + (e.message || ""), "bad"); }
+      finally { verify.disabled = false; }
+    });
   }
 
   /* =========================================================
@@ -1133,6 +1403,10 @@
     // Day / night theme slider
     const themeToggle = $("#theme-toggle");
     if (themeToggle) themeToggle.addEventListener("click", toggleTheme);
+
+    // Cloud sync button
+    const syncBtn = $("#sync-btn");
+    if (syncBtn) syncBtn.addEventListener("click", openSyncModal);
 
     // Dropdown menu
     const menu = $("[data-menu]");
@@ -1166,6 +1440,7 @@
     loadTheme();
     wireChrome();
     render();
+    initSync();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
