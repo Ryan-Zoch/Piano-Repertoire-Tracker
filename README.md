@@ -211,7 +211,6 @@ Made for quiet evenings at the piano. Enjoy.
 
 ## AI Use Disclosure
 
-This website, in it's entirety, was vibe coded with Claude Opus 4.8 in Claude Code. The reason I chose to develop this website this way is because I wanted to get it working quickly in order to start keeping track of my different piano pieces.
+This website, in it's entirety, was vibe coded with Claude Opus 4.8 in Claude Code. The reason I chose to develop this website this way is because I wanted to get it working quickly in order to start keeping track of my different piano pieces.Also, if you notice any issues with the site, feel free to open a new issue on the github website. 
 
-Also, if you notice any issues with the site, feel free to open a new issue on the github website. 
 Thank you for your understanding!
